@@ -1,0 +1,25 @@
+# Ignore all node_modules in any subfolder
+**/node_modules/
+
+# Ignore local environment variables
+**/.env
+
+# Ignore Ministry State files (The "Brain")
+# We ignore these so everyone starts with a clean slate
+ministry-server/accumulator_state.json
+ministry-server/registry.json
+ministry-server/pending_applications.json
+
+# Ignore build/dist folders for the clients
+hospital-client/dist/
+hospital-client/build/
+ministry-client/dist/
+ministry-client/build/
+patient-wallet/dist/
+patient-wallet/build/
+pharmacy-client/dist/
+pharmacy-client/build/
+
+# OS generated files
+.DS_Store
+Thumbs.db

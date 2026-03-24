@@ -1,0 +1,24 @@
+{
+  "name": "pharmacy-server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@veramo/core": "^7.0.0",
+    "@veramo/credential-w3c": "^7.0.0",
+    "@veramo/did-resolver": "^7.0.0",
+    "cors": "^2.8.6",
+    "did-jwt-vc": "^4.0.16",
+    "did-resolver": "^4.1.0",
+    "express": "^5.2.1",
+    "key-did-resolver": "^4.0.0",
+    "web-did-resolver": "^2.0.32"
+  }
+}

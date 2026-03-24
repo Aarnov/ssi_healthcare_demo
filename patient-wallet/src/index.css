@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  background-color: #f8fafc; /* Very light slate gray */
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-content: center;
+  min-height: 100vh;
+  color: #1e293b;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Sophisticated Card Style */
+.medical-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.medical-card:active {
+  transform: scale(0.98);
+}
+
+/* Subdued Scan Line */
+.scan-line {
+  height: 1px;
+  background: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+  animation: scan 3s infinite ease-in-out;
+}
+
+@keyframes scan {
+  0% { top: 10%; opacity: 0; }
+  50% { opacity: 1; }
+  100% { top: 90%; opacity: 0; }
+}

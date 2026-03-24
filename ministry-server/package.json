@@ -1,0 +1,26 @@
+{
+  "name": "ministry-server",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@veramo/core": "^7.0.0",
+    "@veramo/credential-w3c": "^7.0.0",
+    "@veramo/did-manager": "^7.0.0",
+    "@veramo/key-manager": "^7.0.0",
+    "@veramo/utils": "^7.0.0",
+    "body-parser": "^2.2.2",
+    "cors": "^2.8.6",
+    "did-jwt": "^8.0.18",
+    "did-resolver": "^4.1.0",
+    "ethr-did-resolver": "^11.0.5",
+    "express": "^5.2.1"
+  }
+}
