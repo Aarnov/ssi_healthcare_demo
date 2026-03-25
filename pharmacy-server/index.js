@@ -20,20 +20,32 @@ const resolver = new Resolver({
 // --- DYNAMIC FTR CACHE ---
 const LOCAL_FTR_CACHE = {
     modulusN: "10000000000000000000000000000011600000000000000000000000000002739",
-    currentRoot: "",     // Will be pulled from Ministry
-    activeHospitals: []  // List of active DIDs for Tier 2 fallback
+    currentRoot: "",     
+    revokedProduct: 1n    // 🚨 TIER 3: The product of all revoked primes
 };
+
+// 🚨 If running pharmacy scanner on mobile, change localhost to your IP (10.3.66.20)
+const MINISTRY_URL = "http://localhost:3000";
 
 /**
  * 🔄 FTR SYNC ENGINE
- * Pulls the Ground Truth from the Ministry every 30 seconds.
+ * Pulls the Ground Truth and Revoked Primes from the Ministry
  */
 async function syncWithMinistry() {
     try {
-        const response = await axios.get('http://localhost:3000/registry.json');
-        LOCAL_FTR_CACHE.currentRoot = response.data.accumulatorRoot;
-        LOCAL_FTR_CACHE.activeHospitals = response.data.hospitals || [];
-        console.log(`📡 [Sync] Ministry Root Updated: ${LOCAL_FTR_CACHE.currentRoot.substring(0, 15)}...`);
+        const response = await axios.get(`${MINISTRY_URL}/api/deltas?since=0`);
+        LOCAL_FTR_CACHE.currentRoot = response.data.currentRoot;
+        
+        // Build the "Bad List" Product mathematically
+        let rp = 1n;
+        if (response.data.revokedPrimes && response.data.revokedPrimes.length > 0) {
+            response.data.revokedPrimes.forEach(p => {
+                rp *= BigInt(p);
+            });
+        }
+        LOCAL_FTR_CACHE.revokedProduct = rp;
+
+        console.log(`📡 [Sync] Root: ${LOCAL_FTR_CACHE.currentRoot.substring(0, 10)}... | Revoked Product Size: ${rp.toString().length} digits.`);
     } catch (error) {
         console.error("📡 [Sync Error] Ministry Server offline. Using cached state.");
     }
@@ -54,7 +66,6 @@ app.post('/verify', async (req, res) => {
         const primeToUse = rsaProof?.prime || rsaProof?.p || req.body.hospitalPrime;
         const witnessToUse = rsaProof?.witness || rsaProof?.w || req.body.statelessWitness;
         
-        // 🚨 ENFORCING GROUND TRUTH: Use Ministry Root, not the QR's root.
         const expectedRoot = LOCAL_FTR_CACHE.currentRoot;
 
         if (!vc || !primeToUse || !witnessToUse || !expectedRoot) {
@@ -73,30 +84,41 @@ app.post('/verify', async (req, res) => {
         }
         console.log("✅ Gate 1 Passed: Signature Authentic.");
 
-        // --- GATE 2: STATELESS RSA MATH ---
-        // Step 1: Membership Check (The O(1) Path)
-        let isGate2Valid = verifyGate2(witnessToUse, primeToUse, expectedRoot, LOCAL_FTR_CACHE.modulusN);
+        // --- GATE 2: STATELESS RSA MATH (Happy Path) ---
+        let isMathValid = verifyGate2(witnessToUse, primeToUse, expectedRoot, LOCAL_FTR_CACHE.modulusN);
 
-        // Step 2: Tier 2 Fallback (Handles Stale Witnesses for Offline Patients)
-        if (!isGate2Valid) {
-            console.log("⚠️ Math mismatch (likely stale witness). Checking Registry status...");
-            const hospitalInRegistry = LOCAL_FTR_CACHE.activeHospitals.find(h => h.did === issuerDID);
+        if (isMathValid) {
+            console.log("✅ Gate 2 Passed: Standard RSA Math Valid.");
+        } else {
+            // --- GATE 3: BÉZOUT PROOF OF INNOCENCE (Tier 3 Fallback) ---
+            console.log("⚠️ Math mismatch (stale witness). Attempting Gate 3: Bézout Proof...");
             
-            // If the hospital is still ACTIVE in our snapshot, we approve despite the stale math.
-            if (hospitalInRegistry && hospitalInRegistry.status === 'ACTIVE') {
-                console.log("✅ Hospital is still ACTIVE in FTR. Overriding for Offline Patient.");
-                isGate2Valid = true; 
+            if (rsaProof?.bezout) {
+                const a = BigInt(rsaProof.bezout.a);
+                const b = BigInt(rsaProof.bezout.b);
+                const P = BigInt(primeToUse);
+                const RP = LOCAL_FTR_CACHE.revokedProduct;
+
+                // THE BÉZOUT IDENTITY CHECK
+                // If aP + b(RP) == 1, it is mathematically impossible for P to be a factor of RP
+                if ((a * P) + (b * RP) === 1n) {
+                    console.log("✅ Gate 3 Passed: Bézout Proof Verified! Patient's hospital is innocent.");
+                    isMathValid = true; // Override the Gate 2 failure
+                } else {
+                    console.error("❌ Gate 3 Failed: Bézout Equation did not equal 1.");
+                }
+            } else {
+                console.error("❌ Gate 3 Failed: No Bézout Defense provided in QR code.");
             }
         }
 
-        if (!isGate2Valid) {
-            console.error("❌ Gate 2 Failed: Hospital License Revoked.");
-            return res.status(401).json({ success: false, message: "Hospital License Revoked" });
+        // --- FINAL VERDICT ---
+        if (!isMathValid) {
+            console.error("🚨 VERDICT: REJECTED. Cryptographic Verification Failed.");
+            return res.status(401).json({ success: false, message: "Hospital License Revoked or Math Invalid" });
         }
-        console.log("✅ Gate 2 Passed: Hospital Trusted.");
 
-        // --- FINAL APPROVAL ---
-        console.log("🎉 DISPENSE APPROVED.");
+        console.log("🎉 VERDICT: DISPENSE APPROVED.");
         return res.status(200).json({ 
             success: true, 
             medicine: vc.credentialSubject.medicine || vc.credentialSubject.medication,

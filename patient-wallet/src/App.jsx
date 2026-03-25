@@ -32,17 +32,20 @@ function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // The Sync Handler (with mobile alerts)
+// The Sync Handler (with mobile alerts and Deep Clone UI Fix)
   const handleSync = async (currentCreds = creds, isSilent = false) => {
     setIsSyncing(true);
     const { updatedCredentials, needsSave } = await syncWalletWithMinistry(currentCreds);
     
     if (needsSave) {
-      saveAllCredentials(updatedCredentials);
-      setCreds([...updatedCredentials]); 
+      // 🚨 THE FIX: Force a deep clone so React redraws the QR codes!
+      const deeplyClonedCreds = JSON.parse(JSON.stringify(updatedCredentials));
+      
+      saveAllCredentials(deeplyClonedCreds);
+      setCreds(deeplyClonedCreds); 
       
       if (!isSilent) {
-        const newEpoch = updatedCredentials[0]?.rsaProof?.epoch || "Updated";
+        const newEpoch = deeplyClonedCreds[0]?.rsaProof?.epoch || "Updated";
         alert(`✅ Sync Complete!\nFast-forwarded to Epoch ${newEpoch}`);
       }
     } else {
@@ -182,7 +185,7 @@ function App() {
                   <div className="mt-4 flex flex-col gap-2 border-t border-slate-50 pt-3">
                     <div className="flex items-center justify-between">
                       <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">
-                        Epoch: {c.rsaProof?.epoch || 0}
+                        Epoch: {c.rsaProof?.epoch || c.epoch || 0}
                       </span>
                       
                       {c.status === 'REVOKED' ? (

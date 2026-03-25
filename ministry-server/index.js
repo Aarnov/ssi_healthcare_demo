@@ -70,8 +70,10 @@ app.post('/api/admin/approve', (req, res) => {
         else registry.hospitals.push(newRecord);
 
         saveRegistry(registry);
+        console.log(`✅ Hospital Approved: ${did}`);
         res.json({ success: true, newRoot: result.root });
     } catch (err) {
+        console.error("Approval Error:", err);
         res.status(500).json({ error: "Failed to update Accumulator" });
     }
 });
@@ -84,10 +86,14 @@ app.post('/api/admin/revoke', (req, res) => {
     try {
         const result = TrustEngine.revoke(did);
         registry.accumulatorRoot = result.newRoot;
-        registry.hospitals[hospitalIndex].status = 'REVOKED';
+        if (hospitalIndex >= 0) {
+            registry.hospitals[hospitalIndex].status = 'REVOKED';
+        }
         saveRegistry(registry);
+        console.log(`🚨 Hospital Revoked: ${did}`);
         res.json({ success: true, newRoot: result.newRoot });
     } catch (err) {
+        console.error("Revocation Error:", err);
         res.status(500).json({ error: "System error during revocation." });
     }
 });
@@ -98,7 +104,8 @@ app.get('/api/witness', (req, res) => {
         res.json({ 
             witness: TrustEngine.createWitness(did), 
             root: TrustEngine.getRoot(), 
-            prime: TrustEngine.getPrime(did) 
+            prime: TrustEngine.getPrime(did),
+            epoch: TrustEngine.getEpoch() // 🚨 ADD THIS LINE
         });
     } catch (err) {
         res.status(500).json({ error: "Witness generation failed" });
@@ -107,7 +114,8 @@ app.get('/api/witness', (req, res) => {
 
 app.get('/registry.json', (req, res) => res.json(getRegistry()));
 
-// --- NEW WALLET SYNC ENDPOINT ---
+
+// --- 🔄 TIER 1: WALLET SYNC ENDPOINT ---
 app.get('/api/deltas', (req, res) => {
     const clientEpoch = parseInt(req.query.since) || 0;
     const missedEvents = TrustEngine.getHistoryLog().filter(event => event.epoch > clientEpoch);
@@ -115,12 +123,37 @@ app.get('/api/deltas', (req, res) => {
     res.json({
         latestEpoch: TrustEngine.getEpoch(),
         currentRoot: TrustEngine.getRoot(),
-        // Pass the epoch so the wallet can filter precisely
         addedPrimes: missedEvents.filter(e => e.type === 'ADD').map(e => ({ prime: e.prime, epoch: e.epoch })),
-        revokedDIDs: missedEvents.filter(e => e.type === 'REVOKE').map(e => e.did)
+        revokedDIDs: missedEvents.filter(e => e.type === 'REVOKE').map(e => e.did),
+        // 🚨 TIER 3 UPDATE: We now send the revoked primes so the pharmacy can build the "Bad List"
+        revokedPrimes: missedEvents.filter(e => e.type === 'REVOKE').map(e => e.prime) 
     });
 });
 
+
+// --- 🛡️ TIER 3: BÉZOUT INNOCENCE PROOF ENDPOINT ---
+app.get('/api/innocence-proof', (req, res) => {
+    const { prime } = req.query;
+    
+    if (!prime) {
+        return res.status(400).json({ error: "Missing hospital prime in request parameters." });
+    }
+
+    try {
+        const proof = TrustEngine.getInnocenceProof(prime);
+        
+        if (!proof) {
+            // If no hospitals have ever been revoked, there's no need for a defense
+            return res.json({ message: "No revocations exist yet.", a: null, b: null });
+        }
+        
+        console.log(`🛡️ Generated Bezout Defense for Prime: ${prime}`);
+        res.json(proof); // Returns { a, b, revokedProduct }
+    } catch (err) {
+        console.error("Innocence Proof Generation Failed:", err);
+        res.status(500).json({ error: "Failed to generate Bezout proof." });
+    }
+});
 
 
 app.listen(PORT, () => console.log(`🏛️ MINISTRY SERVER running on Port ${PORT}`));

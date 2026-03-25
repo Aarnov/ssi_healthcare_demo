@@ -75,35 +75,52 @@ export const TrustEngine = {
         
         state.currentEpoch++;
         const p = BigInt(state.primeMap[did]);
-        const [g, x, y] = gcde(p, PHI_N);
-        const pInv = (x % PHI_N + PHI_N) % PHI_N;
         
-        state.accumulatorValue = power(BigInt(state.accumulatorValue), pInv, N).toString();
-        
+        // 1. Remove the hospital
         delete state.primeMap[did];
         state.revokedSet.push(did);
+        
+        // 2. 🚨 THE FIX: Safely recalculate the global root from scratch!
+        let newAcc = G;
+        for (let d in state.primeMap) {
+            newAcc = power(newAcc, BigInt(state.primeMap[d]), N);
+        }
+        state.accumulatorValue = newAcc.toString();
         
         state.historyLog.push({
             epoch: state.currentEpoch,
             type: 'REVOKE',
-            did: did
+            did: did,
+            prime: p.toString() // 🚨 CRITICAL: We are now logging the prime here!
         });
 
         saveState();
         return { newRoot: state.accumulatorValue };
     },
 
-    createNonMembershipProof: (targetDid) => {
-        const x = BigInt(state.primeMap[targetDid] || "0");
-        if (x === 0n) return null; 
-
-        let P = 1n;
-        for (let did in state.primeMap) {
-            P *= BigInt(state.primeMap[did]);
-        }
-        const [gcd, a, b] = gcde(x, P);
+    // 🛡️ NEW: The Bézout "Defense" Generator
+    getInnocenceProof: (hospitalPrime) => {
+        const P = BigInt(hospitalPrime);
         
-        return { a: a.toString(), b: b.toString(), currentRoot: state.accumulatorValue };
+        // 1. Calculate the "Bad List" (Product of all revoked primes)
+        let revokedProduct = 1n;
+        state.historyLog.forEach(e => {
+            if (e.type === 'REVOKE' && e.prime) {
+                revokedProduct *= BigInt(e.prime);
+            }
+        });
+
+        // If no one has ever been revoked, there's no need for a defense
+        if (revokedProduct === 1n) return null; 
+
+        // 2. The Bézout Identity: aP + b(RevokedProduct) = 1
+        const [gcd, a, b] = gcde(P, revokedProduct);
+        
+        return {
+            a: a.toString(),
+            b: b.toString(),
+            revokedProduct: revokedProduct.toString()
+        };
     },
 
     createWitness: (did) => {

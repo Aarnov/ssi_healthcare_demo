@@ -93,11 +93,12 @@ app.post('/api/issue', async (req, res) => {
         })
         fs.writeFileSync(EMR_FILE, JSON.stringify(EMR, null, 2))
 
-        // --- NEW LOGIC START ---
-        // 3. Fetch the Mathematical Witness from the Ministry
+// 3. Fetch the Mathematical Witness from the Ministry
         console.log(`🔗 Fetching Witness from Ministry for DID: ${hospitalDID}`);
         const ministryResponse = await axios.get(`http://localhost:3000/api/witness?did=${hospitalDID}`);
-        const { witness, prime, root } = ministryResponse.data;
+        
+        // 🚨 EXTRACT THE EPOCH HERE:
+        const { witness, prime, root, epoch } = ministryResponse.data;
 
         // 4. RETURN THE BUNDLED PAYLOAD TO THE CLIENT
         res.json({ 
@@ -106,8 +107,9 @@ app.post('/api/issue', async (req, res) => {
             payload: {
                 vc: vc,
                 statelessWitness: witness,
-                hospitalPrime: prime,
-                globalRootAtIssuance: root
+                hospitalPrime: prime, 
+                globalRootAtIssuance: root,
+                epoch: epoch // 🚨 STAMP IT INTO THE QR CODE HERE
             }
         })
         // --- NEW LOGIC END ---

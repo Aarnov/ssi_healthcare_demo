@@ -1,7 +1,7 @@
 // src/utils/sync.js
 
-// 🚨 UPDATE THIS IF YOUR WI-FI IP CHANGES
-const MINISTRY_API_URL = "http://10.3.66.20:3000/api/deltas"; 
+const IP_ADDRESS = "10.3.66.20"; 
+const MINISTRY_API_URL = `http://${IP_ADDRESS}:3000/api`;
 const MODULUS_N = "10000000000000000000000000000011600000000000000000000000000002739";
 
 const power = (base, exp, mod) => {
@@ -23,60 +23,91 @@ export const syncWalletWithMinistry = async (savedCredentials) => {
             return { updatedCredentials: [], needsSave: false };
         }
 
-        const minEpoch = Math.min(...savedCredentials.map(cred => cred.rsaProof?.epoch || 0));
-
-        console.log(`🔄 Fetching Ministry Deltas since Epoch ${minEpoch}...`);
-        const response = await fetch(`${MINISTRY_API_URL}?since=${minEpoch}`);
-        if (!response.ok) throw new Error("Ministry unreachable");
+        // Extract the exact epoch for the network request
+        const minEpoch = Math.min(...savedCredentials.map(cred => cred.rsaProof?.epoch ?? cred.epoch ?? 0));
+        
+        const response = await fetch(`${MINISTRY_API_URL}/deltas?since=${minEpoch}`);
+        if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
         
         const data = await response.json(); 
         let needsSave = false;
-        const revokedSet = new Set(data.revokedDIDs); 
 
-        const updatedCredentials = savedCredentials.map(cred => {
-            const issuerDID = cred.vc?.issuer?.id || cred.vc?.issuer;
-            
-            if (cred.status === "REVOKED") return cred;
+        const updatedCredentials = await Promise.all(savedCredentials.map(async (cred) => {
+            try {
+                const issuerDID = cred.vc?.issuer?.id || cred.vc?.issuer;
+                const myPrime = cred.rsaProof?.prime || cred.rsa?.prime || cred.hospitalPrime || cred.statelessPrime;
+                
+                if (cred.status === "REVOKED") return cred;
 
-            if (revokedSet.has(issuerDID)) {
-                cred.status = "REVOKED";
-                needsSave = true;
-                console.log(`❌ Hospital ${issuerDID} was revoked. Flagging UI.`);
+                // --- A. IS MY HOSPITAL DEAD? ---
+                if (data.revokedDIDs && data.revokedDIDs.includes(issuerDID)) {
+                    cred.status = "REVOKED";
+                    needsSave = true;
+                    return cred;
+                }
+
+                // --- B. IS MY MATH STALE? ---
+                // 🚨 FIXED: Capture the exact starting epoch to prevent the "Burnt Cake" double-dip
+                const currentCredEpoch = cred.rsaProof?.epoch ?? cred.epoch ?? 0;
+
+                if (data.latestEpoch > currentCredEpoch) {
+                    
+                    if (!myPrime) {
+                        alert(`CRASH PREVENTED: Missing Prime for hospital ${issuerDID}`);
+                        return cred; 
+                    }
+
+                    let currentWitness = BigInt(cred.rsaProof?.witness || cred.rsa?.witness || cred.statelessWitness || "0");
+                    
+                    const isAlreadyValid = power(currentWitness, BigInt(myPrime), MODULUS_N) === BigInt(data.currentRoot);
+
+                    if (!isAlreadyValid) {
+                        // 🚨 FIXED: Only filter primes added AFTER this credential's specific epoch
+                        const newPrimes = data.addedPrimes.filter(p => p.epoch > currentCredEpoch);
+                        if (newPrimes.length > 0) {
+                            newPrimes.forEach(record => {
+                                if (String(record.prime) !== String(myPrime)) {
+                                    currentWitness = power(currentWitness, BigInt(record.prime), MODULUS_N);
+                                }
+                            });
+                        }
+                    }
+
+                    // 🛡️ TIER 3: THE BÉZOUT FETCH
+                    if (data.revokedPrimes && data.revokedPrimes.length > 0) {
+                        try {
+                            const bResp = await fetch(`${MINISTRY_API_URL}/innocence-proof?prime=${myPrime}`);
+                            const bData = await bResp.json();
+                            if (bData.a) {
+                                if (!cred.rsaProof) cred.rsaProof = {};
+                                cred.rsaProof.bezout = { a: bData.a, b: bData.b };
+                            }
+                        } catch (e) {
+                            // Silently fail Bezout if network drops
+                        }
+                    }
+
+                    if (!cred.rsaProof) cred.rsaProof = {};
+
+                    cred.rsaProof.prime = myPrime.toString();
+                    cred.rsaProof.witness = currentWitness.toString();
+                    cred.rsaProof.r = data.currentRoot;
+                    cred.rsaProof.epoch = data.latestEpoch;
+                    
+                    needsSave = true;
+                }
+                return cred;
+
+            } catch (innerError) {
+                alert("MATH CRASH: " + innerError.message);
                 return cred;
             }
-
-            if (data.latestEpoch > (cred.rsaProof?.epoch || 0)) {
-                // 1. Find the witness wherever it might be hiding
-                let currentWitness = BigInt(cred.rsaProof?.witness || cred.rsa?.witness || cred.statelessWitness || "0");
-                
-                const relevantPrimes = data.addedPrimes.filter(p => p.epoch > (cred.rsaProof?.epoch || 0));
-
-                if (relevantPrimes.length > 0) {
-                    relevantPrimes.forEach(record => {
-                        currentWitness = power(currentWitness, BigInt(record.prime), MODULUS_N);
-                    });
-                    console.log(`✅ Mathematical update applied. Jumped to Epoch ${data.latestEpoch}`);
-                }
-
-                // 2. FORCE CREATE the rsaProof object if it doesn't exist
-                if (!cred.rsaProof) {
-                    cred.rsaProof = {};
-                }
-
-                // 3. Save the new state where the UI expects it
-                cred.rsaProof.witness = currentWitness.toString();
-                cred.rsaProof.r = data.currentRoot;
-                cred.rsaProof.epoch = data.latestEpoch;
-                
-                needsSave = true;
-            }
-            return cred;
-        });
+        }));
 
         return { updatedCredentials, needsSave };
 
     } catch (error) {
-        console.warn("⚠️ Sync Failed (Offline).", error.message);
+        alert("SYNC CRASH: " + error.message);
         return { updatedCredentials: savedCredentials, needsSave: false };
     }
 };
