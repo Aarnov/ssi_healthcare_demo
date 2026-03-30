@@ -3,29 +3,60 @@ import fs from 'fs';
 const STATE_FILE = 'accumulator_state.json';
 const N = BigInt("10000000000000000000000000000011600000000000000000000000000002739"); 
 const G = BigInt("2");
-const PHI_N = BigInt("10000000000000000000000000000011400000000000000000000000000002624");
+
+// --- 🛡️ THE PRIME GENERATOR ENGINE ---
+
+/**
+ * Checks if a number is a prime. 
+ * Essential for ensuring identifiers are coprime for Bezout Proofs.
+ */
+function isPrime(n) {
+    if (n <= 1n) return false;
+    if (n <= 3n) return true;
+    if (n % 2n === 0n || n % 3n === 0n) return false;
+    for (let i = 5n; i * i <= n; i = i + 6n) {
+        if (n % i === 0n || n % (i + 2n) === 0n) return false;
+    }
+    return true;
+}
+
+/**
+ * Finds the next mathematical prime after a given value.
+ */
+function getNextPrime(n) {
+    let candidate = BigInt(n);
+    // Ensure we start on an odd number
+    if (candidate % 2n === 0n) candidate += 1n;
+    else candidate += 2n;
+
+    while (!isPrime(candidate)) {
+        candidate += 2n;
+    }
+    return candidate;
+}
+
+// --- INITIALIZATION ---
 
 let state = {
     currentEpoch: 1,
     accumulatorValue: G.toString(),
     primeMap: {},
-    lastPrimeUsed: "13",
+    lastPrimeUsed: "11", // Starting with a small prime
     revokedSet: [],
     historyLog: []
 };
 
 if (fs.existsSync(STATE_FILE)) {
     state = JSON.parse(fs.readFileSync(STATE_FILE));
-    if (!state.currentEpoch) state.currentEpoch = 1;
-    if (!state.revokedSet) state.revokedSet = [];
-    if (!state.historyLog) state.historyLog = [];
 } else {
-    saveState();
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
 function saveState() {
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
+
+// --- CORE MATH UTILITIES ---
 
 function power(base, exp, mod) {
     let res = 1n;
@@ -46,13 +77,19 @@ function gcde(a, b) {
     return [g, x, y];
 }
 
+// --- TRUST ENGINE ---
+
 export const TrustEngine = {
     add: (did) => {
         let currentAcc = BigInt(state.accumulatorValue);
         if (state.primeMap[did]) return { root: currentAcc.toString(), prime: state.primeMap[did] };
         
         state.currentEpoch++;
-        const p = BigInt(state.lastPrimeUsed) + 2n; 
+        
+        // 🚨 THE FIX: No more +2n. We hunt for the next actual prime.
+        const p = getNextPrime(state.lastPrimeUsed); 
+        
+        // Accumulator update: R_new = R_old^P mod N [cite: 68]
         currentAcc = power(currentAcc, p, N);
         
         state.accumulatorValue = currentAcc.toString();
@@ -76,11 +113,10 @@ export const TrustEngine = {
         state.currentEpoch++;
         const p = BigInt(state.primeMap[did]);
         
-        // 1. Remove the hospital
         delete state.primeMap[did];
         state.revokedSet.push(did);
         
-        // 2. 🚨 THE FIX: Safely recalculate the global root from scratch!
+        // Recalculate global root from scratch for security [cite: 121]
         let newAcc = G;
         for (let d in state.primeMap) {
             newAcc = power(newAcc, BigInt(state.primeMap[d]), N);
@@ -91,18 +127,16 @@ export const TrustEngine = {
             epoch: state.currentEpoch,
             type: 'REVOKE',
             did: did,
-            prime: p.toString() // 🚨 CRITICAL: We are now logging the prime here!
+            prime: p.toString()
         });
 
         saveState();
         return { newRoot: state.accumulatorValue };
     },
 
-    // 🛡️ NEW: The Bézout "Defense" Generator
     getInnocenceProof: (hospitalPrime) => {
         const P = BigInt(hospitalPrime);
         
-        // 1. Calculate the "Bad List" (Product of all revoked primes)
         let revokedProduct = 1n;
         state.historyLog.forEach(e => {
             if (e.type === 'REVOKE' && e.prime) {
@@ -110,10 +144,9 @@ export const TrustEngine = {
             }
         });
 
-        // If no one has ever been revoked, there's no need for a defense
         if (revokedProduct === 1n) return null; 
 
-        // 2. The Bézout Identity: aP + b(RevokedProduct) = 1
+        // Bezout Identity: aP + b(revokedProduct) = 1 
         const [gcd, a, b] = gcde(P, revokedProduct);
         
         return {

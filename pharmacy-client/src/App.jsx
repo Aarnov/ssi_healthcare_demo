@@ -25,7 +25,7 @@ function App() {
       }
 
       // --- NEW: Hardcoded to Port 5000 to hit our Pharmacy Edge Server ---
-      const serverUrl = 'http://10.3.66.20:5000/verify';
+      const serverUrl = 'http://10.9.175.124:5000/verify';
 
       const response = await fetch(serverUrl, {
         method: 'POST',
